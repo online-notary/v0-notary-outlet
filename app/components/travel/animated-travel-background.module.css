@@ -1,0 +1,388 @@
+.animatedBackground {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Sky and clouds */
+.sky {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 70%;
+  background: linear-gradient(to bottom, #64b5f6, #90caf9);
+}
+
+.cloud {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+}
+
+.cloud::before,
+.cloud::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+}
+
+.cloud1 {
+  width: 100px;
+  height: 60px;
+  top: 20%;
+  animation: moveCloud 60s linear infinite;
+}
+
+.cloud1::before {
+  width: 60px;
+  height: 60px;
+  top: -30px;
+  left: 15px;
+}
+
+.cloud1::after {
+  width: 50px;
+  height: 50px;
+  top: -20px;
+  left: 45px;
+}
+
+.cloud2 {
+  width: 120px;
+  height: 70px;
+  top: 10%;
+  left: -120px;
+  animation: moveCloud 80s linear infinite;
+  animation-delay: 10s;
+}
+
+.cloud2::before {
+  width: 70px;
+  height: 70px;
+  top: -35px;
+  left: 20px;
+}
+
+.cloud2::after {
+  width: 60px;
+  height: 60px;
+  top: -25px;
+  left: 55px;
+}
+
+.cloud3 {
+  width: 90px;
+  height: 50px;
+  top: 30%;
+  left: -90px;
+  animation: moveCloud 50s linear infinite;
+  animation-delay: 5s;
+}
+
+.cloud3::before {
+  width: 50px;
+  height: 50px;
+  top: -25px;
+  left: 15px;
+}
+
+.cloud3::after {
+  width: 40px;
+  height: 40px;
+  top: -15px;
+  left: 40px;
+}
+
+.cloud4 {
+  width: 110px;
+  height: 65px;
+  top: 15%;
+  left: -110px;
+  animation: moveCloud 70s linear infinite;
+  animation-delay: 20s;
+}
+
+.cloud4::before {
+  width: 65px;
+  height: 65px;
+  top: -32px;
+  left: 18px;
+}
+
+.cloud4::after {
+  width: 55px;
+  height: 55px;
+  top: -22px;
+  left: 50px;
+}
+
+@keyframes moveCloud {
+  0% {
+    left: -120px;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+/* Improved Airplanes */
+.airplane {
+  position: absolute;
+  z-index: 3;
+}
+
+.airplane div {
+  background: #f9fbfc;
+  border-radius: 100%;
+  position: absolute;
+  z-index: 1;
+}
+
+.head {
+  top: 21px;
+  left: 83px;
+  width: 60px;
+  height: 25px;
+  border-radius: 100%;
+}
+
+.body {
+  top: 20px;
+  left: 0;
+  width: 130px;
+  height: 26px;
+  border-radius: 40% 30% 20% 50%;
+  z-index: 1;
+}
+
+.lwing {
+  top: 7px;
+  left: 60px;
+  height: 21px;
+  width: 30px;
+  border-radius: 5px;
+  z-index: 0;
+  transform: skew(51deg, 0deg);
+}
+
+.rwing {
+  top: 34px;
+  left: 57px;
+  height: 27px;
+  width: 35px;
+  border-radius: 5px;
+  z-index: 1;
+  box-shadow: 0px 6px 4px rgba(0, 0, 0, 0.16);
+  transform: skew(-49deg, 0deg);
+}
+
+.tale {
+  top: 15px;
+  left: 10px;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  transform: skew(35deg, -9deg);
+  background: linear-gradient(0deg, #fff, #bbdeff);
+}
+
+.window {
+  top: 6px;
+  left: 48px;
+  width: 4px !important;
+  height: 4px !important;
+  border-radius: 30% !important;
+  background: #9ad0f5 !important;
+  border: 1px solid #5093d1;
+  position: absolute;
+}
+
+.window::before,
+.window::after {
+  content: "";
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 30%;
+  background: #9ad0f5;
+  border: 1px solid #5093d1;
+}
+
+.window::before {
+  left: -12px;
+  top: -1px;
+}
+
+.window::after {
+  left: 10px;
+  top: -1px;
+}
+
+.window:nth-child(1) {
+  left: 81px;
+}
+
+.window:nth-child(2) {
+  left: 115px;
+}
+
+.window:nth-child(2)::after {
+  border-top-right-radius: 8px;
+  width: 6px;
+}
+
+.airplane1 {
+  top: 15%;
+  left: -150px;
+  transform: scale(0.5);
+  animation: flyAirplane 30s linear infinite;
+}
+
+.airplane2 {
+  top: 35%;
+  left: -150px;
+  transform: scale(0.4);
+  animation: flyAirplane 40s linear infinite;
+  animation-delay: 15s;
+}
+
+@keyframes flyAirplane {
+  0% {
+    left: -150px;
+    transform: scale(0.4);
+  }
+  50% {
+    left: 100%;
+    transform: scale(0.8);
+  }
+  51% {
+    transform: scale(0.8) rotateY(180deg);
+  }
+  100% {
+    left: -150px;
+    transform: scale(0.4) rotateY(180deg);
+  }
+}
+
+/* Ground and road */
+.ground {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 30%;
+  background-color: #81c784;
+  border-top-left-radius: 50% 20%;
+  border-top-right-radius: 50% 20%;
+}
+
+.road {
+  position: absolute;
+  bottom: 10%;
+  left: 0;
+  width: 100%;
+  height: 12px;
+  background-color: #616161;
+}
+
+.roadLine {
+  position: absolute;
+  top: 5px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: repeating-linear-gradient(to right, white, white 20px, transparent 20px, transparent 40px);
+}
+
+/* Cars */
+.car {
+  position: absolute;
+  z-index: 3;
+}
+
+.carBody {
+  position: relative;
+  width: 30px;
+  height: 10px;
+  background-color: #e53935;
+  border-radius: 5px;
+}
+
+.carWindow {
+  position: absolute;
+  width: 10px;
+  height: 6px;
+  background-color: #bbdefb;
+  top: -6px;
+  left: 5px;
+  border-radius: 3px 3px 0 0;
+}
+
+.carWheel1,
+.carWheel2 {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background-color: #212121;
+  border-radius: 50%;
+  bottom: -3px;
+}
+
+.carWheel1 {
+  left: 5px;
+}
+
+.carWheel2 {
+  right: 5px;
+}
+
+.car1 {
+  bottom: calc(30% + 15px);
+  left: -40px;
+  animation: driveCar 15s linear infinite;
+}
+
+.car2 {
+  bottom: calc(30% + 15px);
+  right: -40px;
+  transform: scaleX(-1);
+  animation: driveCarReverse 20s linear infinite;
+  animation-delay: 5s;
+}
+
+@keyframes driveCar {
+  0% {
+    left: -40px;
+  }
+  100% {
+    left: calc(100% + 40px);
+  }
+}
+
+@keyframes driveCarReverse {
+  0% {
+    right: -40px;
+  }
+  100% {
+    right: calc(100% + 40px);
+  }
+}
+
+/* Make the background semi-transparent to ensure content is readable */
+.animatedBackground::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.4);
+  z-index: 10;
+}
