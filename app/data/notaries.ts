@@ -1,5 +1,6 @@
-import { collection, getDocs, query, where, limit as firestoreLimit } from "firebase/firestore"
-import { getFirestore } from "@/app/lib/firebase"
+"use client"
+
+import { initializeFirebase, getFirebaseServices } from "../lib/firebase-client"
 
 export interface Notary {
   id: string
@@ -20,7 +21,7 @@ export interface Notary {
   }[]
   profileImageUrl?: string
   isVerified: boolean
-  isActive: boolean // This controls visibility
+  isActive: boolean
 }
 
 // Function to get all notaries from Firestore with fallback to mock data
@@ -32,56 +33,66 @@ export async function getAllNotaries(limitCount = 100): Promise<{ notaries: Nota
   }
 
   try {
-    console.log("Attempting to fetch notaries from Firestore...")
-
-    // Get the Firestore instance
-    const db = await getFirestore()
-
-    if (!db) {
-      console.log("Firestore not initialized, using mock data")
+    // Try to initialize Firebase if not already initialized
+    const firebaseResult = await initializeFirebase()
+    if (!firebaseResult.success) {
+      console.error("Firebase initialization failed:", firebaseResult.error)
       return { notaries: generateMockNotaries(limitCount), usedMockData: true }
     }
 
-    // Try to fetch from Firestore - simplified query to avoid index requirements
-    const notariesCollection = collection(db, "notaries")
-    const notariesQuery = query(notariesCollection, firestoreLimit(limitCount))
+    const { db } = getFirebaseServices()
 
-    const querySnapshot = await getDocs(notariesQuery)
-
-    // If we got data from Firestore, use it
-    if (!querySnapshot.empty) {
-      console.log(`Successfully fetched ${querySnapshot.size} notaries from Firestore`)
-
-      const notaries = querySnapshot.docs.map((doc) => {
-        const data = doc.data()
-        return {
-          id: doc.id,
-          name: data.name || "Unknown",
-          title: data.title || "Notary Public",
-          location: data.location || `${data.state || "Unknown"}`,
-          phone: data.phone || "Not provided",
-          email: data.email || "Not provided",
-          rating: data.rating || 5,
-          reviews: data.reviews || 0,
-          bio: data.bio || "No bio provided",
-          services: data.services || [],
-          profileImageUrl: data.profileImageUrl,
-          isVerified: data.isVerified || false,
-          isActive: data.isActive !== false, // Default to true if not set
-        } as Notary
-      })
-
-      // Sort by name client-side to avoid requiring an index
-      notaries.sort((a, b) => a.name.localeCompare(b.name))
-
-      return { notaries, usedMockData: false }
+    // If Firebase is not initialized, use mock data
+    if (!db) {
+      console.error("Firebase Firestore not initialized properly")
+      return { notaries: generateMockNotaries(limitCount), usedMockData: true }
     }
 
-    // If no data in Firestore, fall back to mock data
+    // Dynamically import Firestore functions to ensure they're only loaded on the client
+    const { collection, getDocs, query, limit } = await import("firebase/firestore")
+
+    // Try to fetch from Firestore
+    try {
+      const notariesCollection = collection(db, "notaries")
+      // Simple query with just a limit, no ordering or filtering
+      const notariesQuery = query(notariesCollection, limit(limitCount))
+
+      const querySnapshot = await getDocs(notariesQuery)
+
+      // If we got data from Firestore, use it
+      if (!querySnapshot.empty) {
+        console.log(`Successfully fetched ${querySnapshot.size} notaries from Firestore`)
+
+        const notaries = querySnapshot.docs.map((doc) => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            name: data.name || "Unknown",
+            title: data.title || "Notary Public",
+            location: data.location || `${data.state || "Unknown"}`,
+            phone: data.phone || "Not provided",
+            email: data.email || "Not provided",
+            rating: data.rating || 5,
+            reviews: data.reviews || 0,
+            bio: data.bio || "No bio provided",
+            services: data.services || [],
+            profileImageUrl: data.profileImageUrl,
+            isVerified: data.isVerified || false,
+            isActive: data.isActive !== false, // Default to true if not set
+          } as Notary
+        })
+
+        return { notaries, usedMockData: false }
+      }
+    } catch (firestoreError) {
+      console.error("Error fetching from Firestore:", firestoreError)
+    }
+
+    // If no data in Firestore or query failed, fall back to mock data
     console.log("No notaries found in Firestore, using mock data")
     return { notaries: generateMockNotaries(limitCount), usedMockData: true }
   } catch (error) {
-    console.error("Error fetching notaries from Firestore:", error)
+    console.error("Error in getAllNotaries:", error)
     console.log("Falling back to mock data due to error")
 
     // Return mock data as fallback
@@ -99,71 +110,82 @@ export async function getVerifiedNotaries(limitCount = 20): Promise<Notary[]> {
   }
 
   try {
-    console.log("Attempting to fetch notaries from Firestore...")
-
-    // Get the Firestore instance
-    const db = await getFirestore()
-
-    if (!db) {
-      console.log("Firestore not initialized, using mock data")
+    // Try to initialize Firebase if not already initialized
+    const firebaseResult = await initializeFirebase()
+    if (!firebaseResult.success) {
+      console.error("Firebase initialization failed:", firebaseResult.error)
       const mockData = generateMockNotaries(limitCount)
       return mockData.filter((notary) => notary.isVerified === true && notary.isActive === true)
     }
 
-    // Simplified query to avoid index requirements
-    const notariesCollection = collection(db, "notaries")
-    const notariesQuery = query(notariesCollection, firestoreLimit(limitCount))
+    const { db } = getFirebaseServices()
 
-    const querySnapshot = await getDocs(notariesQuery)
-
-    // If we got data from Firestore, filter and use it
-    if (!querySnapshot.empty) {
-      console.log(`Successfully fetched ${querySnapshot.size} notaries from Firestore`)
-
-      const allNotaries = querySnapshot.docs.map((doc) => {
-        const data = doc.data()
-        return {
-          id: doc.id,
-          name: data.name || "Unknown",
-          title: data.title || "Notary Public",
-          location: data.location || `${data.state || "Unknown"}`,
-          phone: data.phone || "Not provided",
-          email: data.email || "Not provided",
-          rating: data.rating || 5,
-          reviews: data.reviews || 0,
-          bio: data.bio || "No bio provided",
-          services: data.services || [],
-          profileImageUrl: data.profileImageUrl,
-          isVerified: data.isVerified || false,
-          isActive: data.isActive !== false, // Default to true if not set
-        } as Notary
-      })
-
-      // Filter for verified and active notaries client-side
-      const verifiedNotaries = allNotaries.filter((notary) => notary.isVerified === true && notary.isActive === true)
-
-      console.log(`Found ${verifiedNotaries.length} verified and active notaries out of ${allNotaries.length} total`)
-
-      // Sort by name
-      verifiedNotaries.sort((a, b) => a.name.localeCompare(b.name))
-
-      // Limit the results
-      return verifiedNotaries.slice(0, limitCount)
+    // If Firebase is not initialized, use mock data
+    if (!db) {
+      console.error("Firebase Firestore not initialized properly")
+      const mockData = generateMockNotaries(limitCount)
+      return mockData.filter((notary) => notary.isVerified === true && notary.isActive === true)
     }
+
+    // Dynamically import Firestore functions
+    const { collection, getDocs, query, limit } = await import("firebase/firestore")
+
+    try {
+      // Use the simplest possible query - just get all notaries with a limit
+      // We'll filter for verified and active notaries client-side
+      const notariesCollection = collection(db, "notaries")
+      const simpleQuery = query(
+        notariesCollection,
+        limit(limitCount * 3), // Get more items since we'll filter some out
+      )
+
+      const querySnapshot = await getDocs(simpleQuery)
+
+      if (!querySnapshot.empty) {
+        console.log(`Successfully fetched ${querySnapshot.size} notaries from Firestore`)
+
+        // Filter for verified and active notaries client-side
+        const notaries = querySnapshot.docs
+          .map((doc) => {
+            const data = doc.data()
+            return {
+              id: doc.id,
+              name: data.name || "Unknown",
+              title: data.title || "Notary Public",
+              location: data.location || `${data.state || "Unknown"}`,
+              phone: data.phone || "Not provided",
+              email: data.email || "Not provided",
+              rating: data.rating || 5,
+              reviews: data.reviews || 0,
+              bio: data.bio || "No bio provided",
+              services: data.services || [],
+              profileImageUrl: data.profileImageUrl,
+              isVerified: data.isVerified || false,
+              isActive: data.isActive !== false, // Default to true if not set
+            } as Notary
+          })
+          .filter((notary) => notary.isVerified === true && notary.isActive === true)
+          .sort((a, b) => a.name.localeCompare(b.name)) // Sort by name client-side
+          .slice(0, limitCount) // Limit to the requested count after filtering
+
+        return notaries
+      }
+    } catch (firestoreError) {
+      console.error("Error fetching from Firestore:", firestoreError)
+    }
+
+    // If no data in Firestore or queries failed, fall back to mock data
+    console.log("No verified notaries found in Firestore, using mock data")
+    const mockData = generateMockNotaries(limitCount)
+    return mockData.filter((notary) => notary.isVerified === true && notary.isActive === true)
   } catch (error) {
-    console.error("Error fetching notaries from Firestore:", error)
+    console.error("Error in getVerifiedNotaries:", error)
+    console.log("Falling back to mock data due to error")
+
+    // Return mock data as fallback
+    const mockData = generateMockNotaries(limitCount)
+    return mockData.filter((notary) => notary.isVerified === true && notary.isActive === true)
   }
-
-  // Generate mock data as fallback
-  const mockData = generateMockNotaries(limitCount)
-
-  // Filter to only include verified and active notaries
-  const verifiedNotaries = mockData.filter((notary) => notary.isVerified === true && notary.isActive === true)
-
-  console.log(
-    `Using mock notary data: Found ${verifiedNotaries.length} verified and active notaries out of ${mockData.length} total`,
-  )
-  return verifiedNotaries
 }
 
 // Function to get a single notary by ID
@@ -176,45 +198,63 @@ export async function getNotaryById(id: string): Promise<Notary | null> {
   }
 
   try {
-    console.log("Attempting to fetch notary from Firestore:", id)
-
-    // Get the Firestore instance
-    const db = await getFirestore()
-
-    if (!db) {
-      console.log("Firestore not initialized, using mock data")
+    // Try to initialize Firebase if not already initialized
+    const firebaseResult = await initializeFirebase()
+    if (!firebaseResult.success) {
+      console.error("Firebase initialization failed:", firebaseResult.error)
       return generateMockNotaryById(id)
     }
 
-    // Try to fetch from Firestore first - simplified query
-    const notaryDoc = await getDocs(query(collection(db, "notaries"), where("uid", "==", id)))
+    const { db } = getFirebaseServices()
 
-    if (!notaryDoc.empty) {
-      console.log("Successfully fetched notary from Firestore")
-      const data = notaryDoc.docs[0].data()
-
-      return {
-        id: notaryDoc.docs[0].id,
-        name: data.name || "Unknown",
-        title: data.title || "Notary Public",
-        location: data.location || `${data.state || "Unknown"}`,
-        phone: data.phone || "Not provided",
-        email: data.email || "Not provided",
-        rating: data.rating || 5,
-        reviews: data.reviews || 0,
-        bio: data.bio || "No bio provided",
-        services: data.services || [],
-        profileImageUrl: data.profileImageUrl,
-        isVerified: data.isVerified || false,
-        isActive: data.isActive !== false, // Default to true if not set
-      }
+    // If Firebase is not initialized, use mock data
+    if (!db) {
+      console.error("Firebase Firestore not initialized properly")
+      return generateMockNotaryById(id)
     }
-  } catch (error) {
-    console.error("Error fetching notary from Firestore:", error)
-  }
 
-  // Generate a mock notary with the given ID
-  return generateMockNotaryById(id)
+    // Dynamically import Firestore functions
+    const { doc, getDoc } = await import("firebase/firestore")
+
+    try {
+      // Try to get the document directly by ID
+      const docRef = doc(db, "notaries", id)
+      const docSnap = await getDoc(docRef)
+
+      if (docSnap.exists()) {
+        console.log("Successfully fetched notary from Firestore by ID")
+        const data = docSnap.data()
+
+        return {
+          id: docSnap.id,
+          name: data.name || "Unknown",
+          title: data.title || "Notary Public",
+          location: data.location || `${data.state || "Unknown"}`,
+          phone: data.phone || "Not provided",
+          email: data.email || "Not provided",
+          rating: data.rating || 5,
+          reviews: data.reviews || 0,
+          bio: data.bio || "No bio provided",
+          services: data.services || [],
+          profileImageUrl: data.profileImageUrl,
+          isVerified: data.isVerified || false,
+          isActive: data.isActive !== false, // Default to true if not set
+        }
+      }
+    } catch (docError) {
+      console.error("Error fetching by document ID:", docError)
+    }
+
+    // If not found in Firestore, fall back to mock data
+    console.log("Notary not found in Firestore, using mock data")
+    return generateMockNotaryById(id)
+  } catch (error) {
+    console.error("Error in getNotaryById:", error)
+    console.log("Falling back to mock data due to error")
+
+    // Return mock data as fallback
+    return generateMockNotaryById(id)
+  }
 }
 
 // Helper function to generate a mock notary by ID

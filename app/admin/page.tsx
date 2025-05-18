@@ -2,300 +2,338 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/app/components/auth/AuthProvider"
+import Image from "next/image"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertCircle, Search, Loader2, Eye, EyeOff } from "lucide-react"
-import { getFirestore, collection, getDocs, doc, updateDoc, query, where } from "firebase/firestore"
-import { app } from "@/app/lib/firebase"
-import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { toast } from "@/components/ui/use-toast"
+import { AlertCircle, CheckCircle, Eye, Loader2, LogOut, Search, Trash2, User } from "lucide-react"
+import { auth, firestore } from "@/lib/firebase"
+import { onAuthStateChanged } from "firebase/auth"
+import { collection, doc, getDocs, updateDoc, deleteDoc, query, orderBy, Timestamp, getDoc } from "firebase/firestore"
+
+// Notary type definition
+interface Notary {
+  id: string
+  name: string
+  email: string
+  state: string
+  commissionNumber: string
+  commissionExpiration: string
+  isApproved: boolean
+  isVerified: boolean
+  profileImageUrl: string | null
+  createdAt: Date
+  phone: string
+  services: string[]
+}
 
 export default function AdminPage() {
   const router = useRouter()
-  const { user } = useAuth()
-  const [notaries, setNotaries] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [searchTerm, setSearchTerm] = useState("")
-  const [updatingId, setUpdatingId] = useState(null)
-  const [redirectToLogin, setRedirectToLogin] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [isCheckingAdmin, setIsCheckingAdmin] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [authorized, setAuthorized] = useState(false)
+  const [user, setUser] = useState<any>(null)
+  const [notaries, setNotaries] = useState<Notary[]>([])
+  const [filteredNotaries, setFilteredNotaries] = useState<Notary[]>([])
+  const [searchQuery, setSearchQuery] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [stats, setStats] = useState({
+    total: 0,
+    approved: 0,
+    pending: 0,
+    verified: 0,
+  })
 
-  // Admin email fallback
-  const ADMIN_EMAIL = "amy@mediadrops.net"
-
+  // Check authentication and admin role
   useEffect(() => {
-    // If user is logged in, check if they're an admin
-    if (user) {
-      checkAdminStatus()
-    } else {
-      setIsLoading(false)
-      setIsCheckingAdmin(false)
-      setRedirectToLogin(true)
-    }
-  }, [user])
-
-  useEffect(() => {
-    if (redirectToLogin) {
-      router.push("/notary/login")
-    }
-  }, [redirectToLogin, router])
-
-  // Check if the user is an admin by looking for the isAdmin field in their notary record
-  // or by checking if their email is amy@mediadrops.net as a fallback
-  const checkAdminStatus = async () => {
-    setIsCheckingAdmin(true)
-    try {
-      // First check if the user's email is the hardcoded admin email
-      if (user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
-        setIsAdmin(true)
-        fetchNotaries()
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (!currentUser) {
+        router.push("/login")
         return
       }
 
-      // Then check if the user has isAdmin=true in their notary record
-      const db = getFirestore(app)
-      const notariesRef = collection(db, "notaries")
-      const q = query(notariesRef, where("email", "==", user.email), where("isAdmin", "==", true))
-      const querySnapshot = await getDocs(q)
+      setUser(currentUser)
 
-      if (!querySnapshot.empty) {
-        setIsAdmin(true)
-        fetchNotaries()
-      } else {
-        setIsAdmin(false)
-        setIsLoading(false)
+      try {
+        const userDoc = await getDoc(doc(firestore, "users", currentUser.uid))
+        const role = userDoc?.data()?.role
+
+        if (role === "admin") {
+          setAuthorized(true)
+          fetchNotaries()
+        } else {
+          router.push("/")
+        }
+      } catch (err) {
+        console.error("Error checking admin role:", err)
+        router.push("/")
       }
-    } catch (error) {
-      console.error("Error checking admin status:", error)
-      setError("Error checking admin status: " + error.message)
-      setIsAdmin(false)
-      setIsLoading(false)
-    } finally {
-      setIsCheckingAdmin(false)
-    }
-  }
 
+      setLoading(false)
+    })
+
+    return () => unsubscribe()
+  }, [router])
+
+  // Fetch notaries from Firestore
   const fetchNotaries = async () => {
     try {
-      setIsLoading(true)
-      const db = getFirestore(app)
-      const notariesRef = collection(db, "notaries")
+      setError(null)
 
-      // Use a simple query to avoid index requirements
-      const querySnapshot = await getDocs(notariesRef)
+      // First try to fetch from users collection where role is "notary"
+      const usersRef = collection(firestore, "users")
+      const q = query(usersRef, orderBy("createdAt", "desc"))
+      const snapshot = await getDocs(q)
 
-      const notariesData = []
-      querySnapshot.forEach((doc) => {
-        notariesData.push({
-          id: doc.id,
-          ...doc.data(),
-          isVerified: doc.data().isVerified === true,
-          isActive: doc.data().isActive !== false, // Default to true if not set
+      let notariesData: Notary[] = []
+
+      if (snapshot.empty) {
+        // If no users found, try the notaries collection as fallback
+        const notariesRef = collection(firestore, "notaries")
+        const notariesQuery = query(notariesRef, orderBy("createdAt", "desc"))
+        const notariesSnapshot = await getDocs(notariesQuery)
+
+        if (notariesSnapshot.empty) {
+          // Use mock data if no notaries found in either collection
+          const mockData = generateMockNotaries(5)
+          setNotaries(mockData)
+          setFilteredNotaries(mockData)
+          updateStats(mockData)
+          return
+        }
+
+        notariesData = notariesSnapshot.docs.map((doc) => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            name: data.name || "Unknown",
+            email: data.email || "Not provided",
+            state: data.state || "Unknown",
+            commissionNumber: data.commissionNumber || "Not provided",
+            commissionExpiration: data.commissionExpiration || "Not provided",
+            isApproved: data.isApproved || false,
+            isVerified: data.isVerified || false,
+            profileImageUrl: data.profileImageUrl || null,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+            phone: data.phone || "Not provided",
+            services: data.services || [],
+          } as Notary
         })
-      })
-
-      // Sort by name client-side
-      notariesData.sort((a, b) => {
-        const nameA = a.name || ""
-        const nameB = b.name || ""
-        return nameA.localeCompare(nameB)
-      })
+      } else {
+        // Process users with "notary" role
+        notariesData = snapshot.docs
+          .filter((doc) => doc.data().role === "notary")
+          .map((doc) => {
+            const data = doc.data()
+            return {
+              id: doc.id,
+              name: data.fullName || "Unknown",
+              email: data.email || "Not provided",
+              state: data.state || "Unknown",
+              commissionNumber: data.notaryCommissionNumber || "Not provided",
+              commissionExpiration:
+                data.commissionExpirationDate instanceof Timestamp
+                  ? data.commissionExpirationDate.toDate().toLocaleDateString()
+                  : "Not provided",
+              isApproved: data.isApproved || false,
+              isVerified: data.isVerified || false,
+              profileImageUrl: data.profileImageUrl || null,
+              createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+              phone: data.phone || "Not provided",
+              services: data.services || [],
+            } as Notary
+          })
+      }
 
       setNotaries(notariesData)
-    } catch (error) {
-      console.error("Error fetching notaries:", error)
-      setError("Error fetching notaries: " + error.message)
-    } finally {
-      setIsLoading(false)
+      setFilteredNotaries(notariesData)
+      updateStats(notariesData)
+    } catch (err: any) {
+      console.error("Error fetching notaries:", err)
+      setError("Failed to load notaries. Please try again.")
+
+      // Use mock data as fallback
+      const mockData = generateMockNotaries(5)
+      setNotaries(mockData)
+      setFilteredNotaries(mockData)
+      updateStats(mockData)
     }
   }
 
-  const toggleNotaryVerification = async (notaryId, currentStatus) => {
-    try {
-      setUpdatingId(notaryId)
-      const db = getFirestore(app)
-      const notaryRef = doc(db, "notaries", notaryId)
-      const newStatus = !currentStatus
+  // Update statistics
+  const updateStats = (data: Notary[]) => {
+    const approved = data.filter((notary) => notary.isApproved).length
+    const verified = data.filter((notary) => notary.isVerified).length
 
-      await updateDoc(notaryRef, {
-        isVerified: newStatus,
-        verifiedAt: newStatus ? new Date().toISOString() : null,
-        verifiedBy: newStatus ? user?.email || "admin" : null,
+    setStats({
+      total: data.length,
+      approved,
+      pending: data.length - approved,
+      verified,
+    })
+  }
+
+  // Handle search
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
+      setFilteredNotaries(notaries)
+    } else {
+      const query = searchQuery.toLowerCase()
+      const filtered = notaries.filter(
+        (notary) =>
+          notary.name.toLowerCase().includes(query) ||
+          notary.email.toLowerCase().includes(query) ||
+          notary.state.toLowerCase().includes(query) ||
+          notary.commissionNumber.toLowerCase().includes(query),
+      )
+      setFilteredNotaries(filtered)
+    }
+  }, [searchQuery, notaries])
+
+  // Toggle notary approval status
+  const handleToggleApproval = async (notaryId: string, currentStatus: boolean) => {
+    try {
+      setError(null)
+      setSuccess(null)
+
+      // Try to update in users collection first
+      const userRef = doc(firestore, "users", notaryId)
+      await updateDoc(userRef, {
+        isApproved: !currentStatus,
+        updatedAt: new Date(),
       })
 
       // Update local state
-      setNotaries(notaries.map((notary) => (notary.id === notaryId ? { ...notary, isVerified: newStatus } : notary)))
+      const updatedNotaries = notaries.map((notary) =>
+        notary.id === notaryId ? { ...notary, isApproved: !currentStatus } : notary,
+      )
 
-      toast({
-        title: newStatus ? "Notary Approved" : "Notary Unapproved",
-        description: `The notary has been ${newStatus ? "approved" : "unapproved"} successfully.`,
-        variant: newStatus ? "default" : "destructive",
-      })
-    } catch (error) {
-      console.error("Error updating notary verification:", error)
-      setError("Error updating notary: " + error.message)
+      setNotaries(updatedNotaries)
+      setFilteredNotaries(
+        filteredNotaries.map((notary) => (notary.id === notaryId ? { ...notary, isApproved: !currentStatus } : notary)),
+      )
 
-      toast({
-        title: "Error",
-        description: "Failed to update notary status. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setUpdatingId(null)
+      updateStats(updatedNotaries)
+      setSuccess(`Notary ${!currentStatus ? "approved" : "unapproved"} successfully`)
+    } catch (err: any) {
+      console.error("Error updating approval status:", err)
+
+      try {
+        // Fallback to notaries collection
+        const notaryRef = doc(firestore, "notaries", notaryId)
+        await updateDoc(notaryRef, {
+          isApproved: !currentStatus,
+          updatedAt: new Date(),
+        })
+
+        // Update local state
+        const updatedNotaries = notaries.map((notary) =>
+          notary.id === notaryId ? { ...notary, isApproved: !currentStatus } : notary,
+        )
+
+        setNotaries(updatedNotaries)
+        setFilteredNotaries(
+          filteredNotaries.map((notary) =>
+            notary.id === notaryId ? { ...notary, isApproved: !currentStatus } : notary,
+          ),
+        )
+
+        updateStats(updatedNotaries)
+        setSuccess(`Notary ${!currentStatus ? "approved" : "unapproved"} successfully`)
+      } catch (fallbackErr) {
+        console.error("Error updating approval status (fallback):", fallbackErr)
+        setError("Failed to update approval status. Please try again.")
+      }
     }
   }
 
-  const toggleNotaryStatus = async (notaryId, currentStatus) => {
+  // Delete notary
+  const handleDeleteNotary = async (notaryId: string) => {
+    if (!confirm("Are you sure you want to delete this notary? This action cannot be undone.")) {
+      return
+    }
+
     try {
-      setUpdatingId(notaryId)
-      const db = getFirestore(app)
-      const notaryRef = doc(db, "notaries", notaryId)
-      const newStatus = !currentStatus
+      setError(null)
+      setSuccess(null)
 
-      console.log(`Toggling visibility for notary ${notaryId} from ${currentStatus} to ${newStatus}`)
-
-      await updateDoc(notaryRef, {
-        isActive: newStatus,
-        lastStatusChange: new Date().toISOString(),
-        statusChangedBy: user?.email || "admin",
-      })
+      // Try to delete from users collection first
+      try {
+        const userRef = doc(firestore, "users", notaryId)
+        await deleteDoc(userRef)
+      } catch (err) {
+        // Fallback to notaries collection
+        const notaryRef = doc(firestore, "notaries", notaryId)
+        await deleteDoc(notaryRef)
+      }
 
       // Update local state
-      setNotaries(notaries.map((notary) => (notary.id === notaryId ? { ...notary, isActive: newStatus } : notary)))
+      const updatedNotaries = notaries.filter((notary) => notary.id !== notaryId)
+      setNotaries(updatedNotaries)
+      setFilteredNotaries(filteredNotaries.filter((notary) => notary.id !== notaryId))
 
-      toast({
-        title: newStatus ? "Notary Visible" : "Notary Hidden",
-        description: `The notary is now ${newStatus ? "visible" : "hidden"} in the public directory.`,
-        variant: "default",
-      })
-    } catch (error) {
-      console.error("Error toggling notary status:", error)
-      setError("Error updating notary status: " + error.message)
-
-      toast({
-        title: "Error",
-        description: "Failed to update notary visibility. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setUpdatingId(null)
+      updateStats(updatedNotaries)
+      setSuccess("Notary deleted successfully")
+    } catch (err: any) {
+      console.error("Error deleting notary:", err)
+      setError("Failed to delete notary. Please try again.")
     }
   }
 
-  // Filter notaries based on search term
-  const filteredNotaries = notaries.filter((notary) => {
-    const searchLower = searchTerm.toLowerCase()
-    return (
-      (notary.name && notary.name.toLowerCase().includes(searchLower)) ||
-      (notary.email && notary.email.toLowerCase().includes(searchLower)) ||
-      (notary.state && notary.state.toLowerCase().includes(searchLower)) ||
-      (notary.licenseNumber && notary.licenseNumber.toLowerCase().includes(searchLower))
-    )
-  })
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await auth.signOut()
+      router.push("/login")
+    } catch (err: any) {
+      console.error("Logout error:", err)
+      setError("Failed to log out. Please try again.")
+    }
+  }
 
-  // If still loading, show loading spinner
-  if (isLoading || isCheckingAdmin) {
+  // Show loading state
+  if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center">
-          <Loader2 className="h-12 w-12 animate-spin text-amber-700 mb-4" />
-          <div className="text-lg">{isCheckingAdmin ? "Checking admin status..." : "Loading notaries..."}</div>
-        </div>
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-700" />
+        <span className="ml-2">Checking permissions...</span>
       </div>
     )
   }
 
-  // If not logged in, redirect to login page
-  if (redirectToLogin) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center">
-          <Loader2 className="h-12 w-12 animate-spin text-amber-700 mb-4" />
-          <div className="text-lg">Redirecting to login...</div>
-        </div>
-      </div>
-    )
-  }
-
-  // If logged in but not an admin, show access denied
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <Card className="max-w-md mx-auto">
-          <CardHeader>
-            <CardTitle>Access Denied</CardTitle>
-            <CardDescription>This page is only accessible to administrators</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>This page is only accessible to administrators</AlertDescription>
-            </Alert>
-
-            <div className="bg-gray-100 p-4 rounded-md text-sm">
-              <p>
-                <strong>Your email:</strong> {user.email}
-              </p>
-              <p>
-                <strong>Admin status:</strong> Not an admin
-              </p>
-            </div>
-
-            <Button className="w-full" onClick={() => router.push("/notary-dashboard")}>
-              Return to Dashboard
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  // At this point, the user is authenticated as an admin
-  const pendingNotaries = notaries.filter((notary) => !notary.isVerified)
-  const verifiedNotaries = notaries.filter((notary) => notary.isVerified)
-  const activeNotaries = notaries.filter((notary) => notary.isActive)
-  const inactiveNotaries = notaries.filter((notary) => !notary.isActive)
+  // If not authorized, don't render anything (router will redirect)
+  if (!authorized) return null
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
+      {/* Header */}
+      <header className="bg-white border-b sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="font-bold text-2xl text-amber-700">Admin Dashboard</div>
-          <div className="flex items-center gap-4">
-            <Button variant="outline" onClick={() => router.push("/set-admin")}>
-              Set Admin Status
+          <div className="flex items-center">
+            <h1 className="font-bold text-2xl text-amber-700">NotaryOutlet</h1>
+            <Badge variant="outline" className="ml-4">
+              Admin Dashboard
+            </Badge>
+          </div>
+          <div className="flex items-center space-x-4">
+            <span className="text-sm text-gray-600 hidden md:inline-block">{user?.email || "Admin User"}</span>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign Out
             </Button>
-            <Button variant="outline" onClick={() => router.push("/notary-dashboard")}>
-              Return to Dashboard
-            </Button>
-            <div className="flex items-center">
-              <div className="mr-3 text-right">
-                <div className="font-medium">{user.displayName || user.email}</div>
-                <div className="text-sm text-gray-500">Administrator</div>
-              </div>
-              <div className="h-10 w-10 rounded-full bg-gray-200 overflow-hidden">
-                {user.photoURL ? (
-                  <img src={user.photoURL || "/placeholder.svg"} alt="Profile" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="h-full w-full flex items-center justify-center bg-red-100 text-red-800 font-medium">
-                    {(user.displayName || user.email || "A").charAt(0).toUpperCase()}
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         </div>
       </header>
 
+      {/* Main content */}
       <main className="container mx-auto px-4 py-8">
+        {/* Alerts */}
         {error && (
           <Alert variant="destructive" className="mb-6">
             <AlertCircle className="h-4 w-4" />
@@ -303,223 +341,165 @@ export default function AdminPage() {
           </Alert>
         )}
 
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-          <p className="text-gray-600">Manage notary profiles and platform settings</p>
-        </div>
+        {success && (
+          <Alert className="mb-6 bg-green-50 border-green-200">
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            <AlertDescription className="text-green-700">{success}</AlertDescription>
+          </Alert>
+        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle>Total Notaries</CardTitle>
-              <CardDescription>All registered notaries</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{notaries.length}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle>Pending Approvals</CardTitle>
-              <CardDescription>Notaries awaiting verification</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{pendingNotaries.length}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle>Active Notaries</CardTitle>
-              <CardDescription>Visible notaries</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{activeNotaries.length}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle>Inactive Notaries</CardTitle>
-              <CardDescription>Hidden notaries</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{inactiveNotaries.length}</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Notary Approval Management</CardTitle>
-            <CardDescription>Approve or unapprove notaries on the platform</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="relative mb-6">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <Input
-                placeholder="Search by name, email, state, or license number..."
-                className="pl-10"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>State</TableHead>
-                    <TableHead>License</TableHead>
-                    <TableHead>Approved</TableHead>
-                    <TableHead>Visibility</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredNotaries.length > 0 ? (
-                    filteredNotaries.map((notary) => (
-                      <TableRow key={notary.id}>
-                        <TableCell className="font-medium">{notary.name || "N/A"}</TableCell>
-                        <TableCell>{notary.email}</TableCell>
-                        <TableCell>{notary.state || "N/A"}</TableCell>
-                        <TableCell>{notary.licenseNumber || "N/A"}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center">
-                            <Checkbox
-                              id={`approved-${notary.id}`}
-                              checked={notary.isVerified}
-                              onCheckedChange={() => toggleNotaryVerification(notary.id, notary.isVerified)}
-                              disabled={updatingId === notary.id}
-                              className="mr-2 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                            />
-                            <label
-                              htmlFor={`approved-${notary.id}`}
-                              className={`text-sm ${notary.isVerified ? "text-green-600 font-medium" : "text-gray-500"}`}
-                            >
-                              {notary.isVerified ? "Approved" : "Not Approved"}
-                            </label>
-                            {updatingId === notary.id && (
-                              <Loader2 className="ml-2 h-4 w-4 animate-spin text-gray-500" />
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {notary.isActive ? (
-                            <Badge className="bg-blue-500">Visible</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-red-600 border-red-600">
-                              Hidden
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant={notary.isActive ? "destructive" : "default"}
-                              onClick={() => toggleNotaryStatus(notary.id, notary.isActive)}
-                              disabled={updatingId === notary.id}
-                            >
-                              {updatingId === notary.id ? (
-                                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                              ) : notary.isActive ? (
-                                <EyeOff className="mr-1 h-4 w-4" />
-                              ) : (
-                                <Eye className="mr-1 h-4 w-4" />
-                              )}
-                              {notary.isActive ? "Hide" : "Show"}
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={7} className="h-24 text-center">
-                        {searchTerm ? "No notaries match your search criteria" : "No notaries found"}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Tabs defaultValue="all">
-          <TabsList className="mb-4">
-            <TabsTrigger value="all">All Notaries</TabsTrigger>
-            <TabsTrigger value="pending">Pending Approval</TabsTrigger>
-            <TabsTrigger value="approved">Approved</TabsTrigger>
-            <TabsTrigger value="active">Visible</TabsTrigger>
-            <TabsTrigger value="inactive">Hidden</TabsTrigger>
+        {/* Dashboard Tabs */}
+        <Tabs defaultValue="notaries" className="w-full">
+          <TabsList className="mb-6">
+            <TabsTrigger value="notaries">Notaries</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="all">
+          {/* Notaries Tab */}
+          <TabsContent value="notaries">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-2xl">{stats.total}</CardTitle>
+                  <CardDescription>Total Notaries</CardDescription>
+                </CardHeader>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-2xl text-green-600">{stats.approved}</CardTitle>
+                  <CardDescription>Approved</CardDescription>
+                </CardHeader>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-2xl text-amber-600">{stats.pending}</CardTitle>
+                  <CardDescription>Pending Approval</CardDescription>
+                </CardHeader>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-2xl text-blue-600">{stats.verified}</CardTitle>
+                  <CardDescription>Verified</CardDescription>
+                </CardHeader>
+              </Card>
+            </div>
+
             <Card>
-              <CardContent className="p-6">
+              <CardHeader>
+                <CardTitle>Notary Management</CardTitle>
+                <CardDescription>
+                  Approve or unapprove notaries to control their visibility in the public directory
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex justify-between items-center mb-6">
+                  <div className="relative w-full max-w-sm">
+                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Search notaries..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8"
+                    />
+                  </div>
+                  <Button onClick={fetchNotaries} variant="outline" className="ml-2">
+                    Refresh
+                  </Button>
+                </div>
+
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Name</TableHead>
+                        <TableHead>Notary</TableHead>
                         <TableHead>Email</TableHead>
                         <TableHead>State</TableHead>
-                        <TableHead>License</TableHead>
-                        <TableHead>Approved</TableHead>
-                        <TableHead>Visibility</TableHead>
+                        <TableHead>Commission #</TableHead>
+                        <TableHead>Expiration</TableHead>
+                        <TableHead>Joined</TableHead>
+                        <TableHead>Approval Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {notaries.map((notary) => (
-                        <TableRow key={notary.id}>
-                          <TableCell className="font-medium">{notary.name || "N/A"}</TableCell>
-                          <TableCell>{notary.email}</TableCell>
-                          <TableCell>{notary.state || "N/A"}</TableCell>
-                          <TableCell>{notary.licenseNumber || "N/A"}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center">
-                              <Checkbox
-                                id={`all-approved-${notary.id}`}
-                                checked={notary.isVerified}
-                                onCheckedChange={() => toggleNotaryVerification(notary.id, notary.isVerified)}
-                                disabled={updatingId === notary.id}
-                                className="mr-2 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                              />
-                              <label
-                                htmlFor={`all-approved-${notary.id}`}
-                                className={`text-sm ${notary.isVerified ? "text-green-600 font-medium" : "text-gray-500"}`}
-                              >
-                                {notary.isVerified ? "Approved" : "Not Approved"}
-                              </label>
-                              {updatingId === notary.id && (
-                                <Loader2 className="ml-2 h-4 w-4 animate-spin text-gray-500" />
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => toggleNotaryStatus(notary.id, notary.isActive)}
-                              disabled={updatingId === notary.id}
-                              className="h-8 px-2"
-                            >
-                              {notary.isActive ? (
-                                <Badge className="bg-blue-500">Visible</Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-red-600 border-red-600">
-                                  Hidden
-                                </Badge>
-                              )}
-                            </Button>
+                      {filteredNotaries.length > 0 ? (
+                        filteredNotaries.map((notary) => (
+                          <TableRow key={notary.id}>
+                            <TableCell>
+                              <div className="flex items-center space-x-3">
+                                <div className="relative h-10 w-10 rounded-full overflow-hidden bg-gray-100">
+                                  {notary.profileImageUrl ? (
+                                    <Image
+                                      src={notary.profileImageUrl || "/placeholder.svg"}
+                                      alt={notary.name}
+                                      fill
+                                      className="object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex items-center justify-center h-full w-full">
+                                      <User className="h-5 w-5 text-gray-400" />
+                                    </div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="font-medium">{notary.name}</div>
+                                  <div className="text-xs text-gray-500">{notary.phone}</div>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>{notary.email}</TableCell>
+                            <TableCell>{notary.state}</TableCell>
+                            <TableCell>{notary.commissionNumber}</TableCell>
+                            <TableCell>{notary.commissionExpiration}</TableCell>
+                            <TableCell>
+                              {notary.createdAt.toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center space-x-2">
+                                <Switch
+                                  checked={notary.isApproved}
+                                  onCheckedChange={() => handleToggleApproval(notary.id, notary.isApproved)}
+                                />
+                                <span className={notary.isApproved ? "text-green-600" : "text-gray-500"}>
+                                  {notary.isApproved ? "Approved" : "Unapproved"}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex space-x-2">
+                                <Button variant="outline" size="sm" asChild>
+                                  <Link href={`/notary/${notary.id}`}>
+                                    <Eye className="h-4 w-4 mr-1" /> View
+                                  </Link>
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-red-600 border-red-200 hover:bg-red-50"
+                                  onClick={() => handleDeleteNotary(notary.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-1" /> Delete
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={8} className="text-center py-8 text-gray-500">
+                            {searchQuery
+                              ? "No notaries found matching your search criteria"
+                              : "No notaries found in the system"}
                           </TableCell>
                         </TableRow>
-                      ))}
+                      )}
                     </TableBody>
                   </Table>
                 </div>
@@ -527,261 +507,17 @@ export default function AdminPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="pending">
+          {/* Settings Tab */}
+          <TabsContent value="settings">
             <Card>
-              <CardContent className="p-6">
-                {pendingNotaries.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>State</TableHead>
-                          <TableHead>License</TableHead>
-                          <TableHead>Approve</TableHead>
-                          <TableHead>Visibility</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pendingNotaries.map((notary) => (
-                          <TableRow key={notary.id}>
-                            <TableCell className="font-medium">{notary.name || "N/A"}</TableCell>
-                            <TableCell>{notary.email}</TableCell>
-                            <TableCell>{notary.state || "N/A"}</TableCell>
-                            <TableCell>{notary.licenseNumber || "N/A"}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center">
-                                <Checkbox
-                                  id={`pending-approved-${notary.id}`}
-                                  checked={notary.isVerified}
-                                  onCheckedChange={() => toggleNotaryVerification(notary.id, notary.isVerified)}
-                                  disabled={updatingId === notary.id}
-                                  className="mr-2 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                                />
-                                <label htmlFor={`pending-approved-${notary.id}`} className="text-sm text-gray-500">
-                                  Approve
-                                </label>
-                                {updatingId === notary.id && (
-                                  <Loader2 className="ml-2 h-4 w-4 animate-spin text-gray-500" />
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                variant={notary.isActive ? "outline" : "default"}
-                                onClick={() => toggleNotaryStatus(notary.id, notary.isActive)}
-                                disabled={updatingId === notary.id}
-                              >
-                                {notary.isActive ? "Hide" : "Show"}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">No pending notaries found</div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="approved">
-            <Card>
-              <CardContent className="p-6">
-                {verifiedNotaries.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>State</TableHead>
-                          <TableHead>License</TableHead>
-                          <TableHead>Unapprove</TableHead>
-                          <TableHead>Visibility</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {verifiedNotaries.map((notary) => (
-                          <TableRow key={notary.id}>
-                            <TableCell className="font-medium">{notary.name || "N/A"}</TableCell>
-                            <TableCell>{notary.email}</TableCell>
-                            <TableCell>{notary.state || "N/A"}</TableCell>
-                            <TableCell>{notary.licenseNumber || "N/A"}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center">
-                                <Checkbox
-                                  id={`approved-verified-${notary.id}`}
-                                  checked={notary.isVerified}
-                                  onCheckedChange={() => toggleNotaryVerification(notary.id, notary.isVerified)}
-                                  disabled={updatingId === notary.id}
-                                  className="mr-2 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                                />
-                                <label
-                                  htmlFor={`approved-verified-${notary.id}`}
-                                  className="text-sm text-green-600 font-medium"
-                                >
-                                  Approved
-                                </label>
-                                {updatingId === notary.id && (
-                                  <Loader2 className="ml-2 h-4 w-4 animate-spin text-gray-500" />
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                variant={notary.isActive ? "outline" : "default"}
-                                onClick={() => toggleNotaryStatus(notary.id, notary.isActive)}
-                                disabled={updatingId === notary.id}
-                              >
-                                {notary.isActive ? "Hide" : "Show"}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">No approved notaries found</div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="active">
-            <Card>
-              <CardContent className="p-6">
-                {activeNotaries.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>State</TableHead>
-                          <TableHead>License</TableHead>
-                          <TableHead>Approved</TableHead>
-                          <TableHead>Hide</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {activeNotaries.map((notary) => (
-                          <TableRow key={notary.id}>
-                            <TableCell className="font-medium">{notary.name || "N/A"}</TableCell>
-                            <TableCell>{notary.email}</TableCell>
-                            <TableCell>{notary.state || "N/A"}</TableCell>
-                            <TableCell>{notary.licenseNumber || "N/A"}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center">
-                                <Checkbox
-                                  id={`active-approved-${notary.id}`}
-                                  checked={notary.isVerified}
-                                  onCheckedChange={() => toggleNotaryVerification(notary.id, notary.isVerified)}
-                                  disabled={updatingId === notary.id}
-                                  className="mr-2 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                                />
-                                <label
-                                  htmlFor={`active-approved-${notary.id}`}
-                                  className={`text-sm ${notary.isVerified ? "text-green-600 font-medium" : "text-gray-500"}`}
-                                >
-                                  {notary.isVerified ? "Approved" : "Not Approved"}
-                                </label>
-                                {updatingId === notary.id && (
-                                  <Loader2 className="ml-2 h-4 w-4 animate-spin text-gray-500" />
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => toggleNotaryStatus(notary.id, notary.isActive)}
-                                disabled={updatingId === notary.id}
-                              >
-                                <EyeOff className="mr-1 h-4 w-4" />
-                                Hide
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">No visible notaries found</div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="inactive">
-            <Card>
-              <CardContent className="p-6">
-                {inactiveNotaries.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>State</TableHead>
-                          <TableHead>License</TableHead>
-                          <TableHead>Approved</TableHead>
-                          <TableHead>Show</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {inactiveNotaries.map((notary) => (
-                          <TableRow key={notary.id}>
-                            <TableCell className="font-medium">{notary.name || "N/A"}</TableCell>
-                            <TableCell>{notary.email}</TableCell>
-                            <TableCell>{notary.state || "N/A"}</TableCell>
-                            <TableCell>{notary.licenseNumber || "N/A"}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center">
-                                <Checkbox
-                                  id={`inactive-approved-${notary.id}`}
-                                  checked={notary.isVerified}
-                                  onCheckedChange={() => toggleNotaryVerification(notary.id, notary.isVerified)}
-                                  disabled={updatingId === notary.id}
-                                  className="mr-2 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                                />
-                                <label
-                                  htmlFor={`inactive-approved-${notary.id}`}
-                                  className={`text-sm ${notary.isVerified ? "text-green-600 font-medium" : "text-gray-500"}`}
-                                >
-                                  {notary.isVerified ? "Approved" : "Not Approved"}
-                                </label>
-                                {updatingId === notary.id && (
-                                  <Loader2 className="ml-2 h-4 w-4 animate-spin text-gray-500" />
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                className="bg-blue-600 hover:bg-blue-700"
-                                onClick={() => toggleNotaryStatus(notary.id, notary.isActive)}
-                                disabled={updatingId === notary.id}
-                              >
-                                <Eye className="mr-1 h-4 w-4" />
-                                Show
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">No hidden notaries found</div>
-                )}
+              <CardHeader>
+                <CardTitle>Admin Settings</CardTitle>
+                <CardDescription>Configure admin dashboard settings</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-12">
+                  <p className="text-gray-500">Admin settings coming soon</p>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -789,4 +525,28 @@ export default function AdminPage() {
       </main>
     </div>
   )
+}
+
+// Helper function to generate mock notaries for testing
+function generateMockNotaries(count: number): Notary[] {
+  const states = ["California", "Texas", "Florida", "New York", "Illinois"]
+  const services = ["Loan Documents", "Real Estate", "Mobile Service", "Power of Attorney", "Wills & Trusts"]
+
+  return Array.from({ length: count }, (_, i) => ({
+    id: `mock-${i + 1}`,
+    name: `Notary ${i + 1}`,
+    email: `notary${i + 1}@example.com`,
+    state: states[Math.floor(Math.random() * states.length)],
+    commissionNumber: `${100000 + i}`,
+    commissionExpiration: new Date(Date.now() + Math.random() * 365 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+    isApproved: Math.random() > 0.5,
+    isVerified: Math.random() > 0.7,
+    profileImageUrl: null,
+    createdAt: new Date(Date.now() - Math.random() * 90 * 24 * 60 * 60 * 1000),
+    phone: `(${Math.floor(Math.random() * 900) + 100}) ${Math.floor(Math.random() * 900) + 100}-${Math.floor(Math.random() * 9000) + 1000}`,
+    services: Array.from(
+      { length: Math.floor(Math.random() * 3) + 1 },
+      () => services[Math.floor(Math.random() * services.length)],
+    ),
+  }))
 }
