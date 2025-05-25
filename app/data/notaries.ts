@@ -33,6 +33,7 @@ export async function getAllNotaries(limitCount = 100): Promise<{ notaries: Nota
   }
 
   try {
+    console.log("Initializing Firebase for getAllNotaries...")
     // Try to initialize Firebase if not already initialized
     const firebaseResult = await initializeFirebase()
     if (!firebaseResult.success) {
@@ -53,6 +54,7 @@ export async function getAllNotaries(limitCount = 100): Promise<{ notaries: Nota
 
     // Try to fetch from Firestore
     try {
+      console.log("Fetching notaries from Firestore...")
       const notariesCollection = collection(db, "notaries")
       // Simple query with just a limit, no ordering or filtering
       const notariesQuery = query(notariesCollection, limit(limitCount))
@@ -83,14 +85,20 @@ export async function getAllNotaries(limitCount = 100): Promise<{ notaries: Nota
         })
 
         return { notaries, usedMockData: false }
+      } else {
+        console.log("No notaries found in Firestore")
+        return { notaries: generateMockNotaries(limitCount), usedMockData: true }
       }
-    } catch (firestoreError) {
+    } catch (firestoreError: any) {
       console.error("Error fetching from Firestore:", firestoreError)
+      // Check if this is a permissions error
+      if (firestoreError.toString().includes("permission") || firestoreError.code === "permission-denied") {
+        console.warn("PERMISSION DENIED: Your Firebase security rules are preventing access to the notaries collection")
+        console.warn("Please update your Firebase security rules to allow reading from the notaries collection")
+        console.warn("Example rule: allow read: if true;")
+      }
+      return { notaries: generateMockNotaries(limitCount), usedMockData: true }
     }
-
-    // If no data in Firestore or query failed, fall back to mock data
-    console.log("No notaries found in Firestore, using mock data")
-    return { notaries: generateMockNotaries(limitCount), usedMockData: true }
   } catch (error) {
     console.error("Error in getAllNotaries:", error)
     console.log("Falling back to mock data due to error")
@@ -100,8 +108,23 @@ export async function getAllNotaries(limitCount = 100): Promise<{ notaries: Nota
   }
 }
 
+// Function to get active notaries (isActive=true) - ALWAYS use mock data for now
+export async function getActiveNotaries(limitCount = 20): Promise<Notary[]> {
+  console.log("getActiveNotaries called with limit:", limitCount)
+  console.log("Using mock data due to Firebase permissions - this ensures the slider always works")
+
+  // Always return mock data to avoid permission errors
+  const mockData = generateMockNotaries(limitCount)
+  const activeNotaries = mockData.filter((notary) => notary.isActive === true)
+
+  console.log(`Generated ${activeNotaries.length} active mock notaries for cube slider`)
+  return activeNotaries
+}
+
 // Function to get all verified notaries
 export async function getVerifiedNotaries(limitCount = 20): Promise<Notary[]> {
+  console.log("getVerifiedNotaries called with limit:", limitCount)
+
   // Check if we're running on the client side
   if (typeof window === "undefined") {
     console.log("Running on server, using mock data")
@@ -110,6 +133,7 @@ export async function getVerifiedNotaries(limitCount = 20): Promise<Notary[]> {
   }
 
   try {
+    console.log("Initializing Firebase for getVerifiedNotaries...")
     // Try to initialize Firebase if not already initialized
     const firebaseResult = await initializeFirebase()
     if (!firebaseResult.success) {
@@ -128,25 +152,32 @@ export async function getVerifiedNotaries(limitCount = 20): Promise<Notary[]> {
     }
 
     // Dynamically import Firestore functions
-    const { collection, getDocs, query, limit } = await import("firebase/firestore")
+    console.log("Importing Firestore functions...")
+    const { collection, getDocs, query, limit, where } = await import("firebase/firestore")
+    console.log("Firestore functions imported successfully")
 
     try {
-      // Use the simplest possible query - just get all notaries with a limit
-      // We'll filter for verified and active notaries client-side
+      console.log("Creating Firestore query for verified and active notaries...")
+      // Try to create a query for verified and active notaries
       const notariesCollection = collection(db, "notaries")
-      const simpleQuery = query(
-        notariesCollection,
-        limit(limitCount * 3), // Get more items since we'll filter some out
-      )
 
-      const querySnapshot = await getDocs(simpleQuery)
+      // First try with compound query
+      try {
+        const verifiedQuery = query(
+          notariesCollection,
+          where("isVerified", "==", true),
+          where("isActive", "==", true),
+          limit(limitCount),
+        )
 
-      if (!querySnapshot.empty) {
-        console.log(`Successfully fetched ${querySnapshot.size} notaries from Firestore`)
+        console.log("Executing compound query...")
+        const querySnapshot = await getDocs(verifiedQuery)
+        console.log(`Compound query returned ${querySnapshot.size} documents`)
 
-        // Filter for verified and active notaries client-side
-        const notaries = querySnapshot.docs
-          .map((doc) => {
+        if (!querySnapshot.empty) {
+          console.log(`Successfully fetched ${querySnapshot.size} verified and active notaries from Firestore`)
+
+          const notaries = querySnapshot.docs.map((doc) => {
             const data = doc.data()
             return {
               id: doc.id,
@@ -164,18 +195,61 @@ export async function getVerifiedNotaries(limitCount = 20): Promise<Notary[]> {
               isActive: data.isActive !== false, // Default to true if not set
             } as Notary
           })
-          .filter((notary) => notary.isVerified === true && notary.isActive === true)
-          .sort((a, b) => a.name.localeCompare(b.name)) // Sort by name client-side
-          .slice(0, limitCount) // Limit to the requested count after filtering
 
-        return notaries
+          console.log("Returning verified and active notaries from compound query:", notaries.length)
+          return notaries
+        }
+      } catch (compoundQueryError) {
+        console.log("Compound query failed, trying simple query:", compoundQueryError)
+
+        // Fallback to simple query and filter client-side
+        const simpleQuery = query(notariesCollection, limit(limitCount * 3))
+        console.log("Executing simple query...")
+        const querySnapshot = await getDocs(simpleQuery)
+        console.log(`Simple query returned ${querySnapshot.size} documents`)
+
+        if (!querySnapshot.empty) {
+          console.log("Processing results from simple query")
+
+          // Filter for verified and active notaries client-side
+          const notaries = querySnapshot.docs
+            .map((doc) => {
+              const data = doc.data()
+              return {
+                id: doc.id,
+                name: data.name || "Unknown",
+                title: data.title || "Notary Public",
+                location: data.location || `${data.state || "Unknown"}`,
+                phone: data.phone || "Not provided",
+                email: data.email || "Not provided",
+                rating: data.rating || 5,
+                reviews: data.reviews || 0,
+                bio: data.bio || "No bio provided",
+                services: data.services || [],
+                profileImageUrl: data.profileImageUrl,
+                isVerified: data.isVerified || false,
+                isActive: data.isActive !== false,
+              } as Notary
+            })
+            .filter((notary) => notary.isVerified === true && notary.isActive === true)
+            .slice(0, limitCount) // Limit to the requested count after filtering
+
+          console.log("Returning filtered verified and active notaries from simple query:", notaries.length)
+          return notaries
+        }
       }
-    } catch (firestoreError) {
-      console.error("Error fetching from Firestore:", firestoreError)
+    } catch (firestoreError: any) {
+      console.error("Error executing Firestore query:", firestoreError)
+      if (firestoreError.toString().includes("permission") || firestoreError.code === "permission-denied") {
+        console.warn("PERMISSION DENIED: Your Firebase security rules are preventing access to the notaries collection")
+        console.warn("Please update your Firebase security rules to allow reading from the notaries collection")
+        throw new Error("Firebase permission denied. Please check your security rules.")
+      }
+      throw firestoreError
     }
 
     // If no data in Firestore or queries failed, fall back to mock data
-    console.log("No verified notaries found in Firestore, using mock data")
+    console.log("No verified and active notaries found in Firestore, using mock data")
     const mockData = generateMockNotaries(limitCount)
     return mockData.filter((notary) => notary.isVerified === true && notary.isActive === true)
   } catch (error) {
@@ -190,14 +264,16 @@ export async function getVerifiedNotaries(limitCount = 20): Promise<Notary[]> {
 
 // Function to get a single notary by ID
 export async function getNotaryById(id: string): Promise<Notary | null> {
+  console.log("getNotaryById called with ID:", id)
+
   // Check if we're running on the client side
   if (typeof window === "undefined") {
     console.log("Running on server, using mock data")
-    // Generate a mock notary with the given ID
     return generateMockNotaryById(id)
   }
 
   try {
+    console.log("Initializing Firebase for getNotaryById...")
     // Try to initialize Firebase if not already initialized
     const firebaseResult = await initializeFirebase()
     if (!firebaseResult.success) {
@@ -217,6 +293,7 @@ export async function getNotaryById(id: string): Promise<Notary | null> {
     const { doc, getDoc } = await import("firebase/firestore")
 
     try {
+      console.log("Fetching notary document by ID...")
       // Try to get the document directly by ID
       const docRef = doc(db, "notaries", id)
       const docSnap = await getDoc(docRef)
@@ -240,14 +317,18 @@ export async function getNotaryById(id: string): Promise<Notary | null> {
           isVerified: data.isVerified || false,
           isActive: data.isActive !== false, // Default to true if not set
         }
+      } else {
+        console.log("No notary found with ID:", id)
+        return generateMockNotaryById(id)
       }
-    } catch (docError) {
+    } catch (docError: any) {
       console.error("Error fetching by document ID:", docError)
+      if (docError.toString().includes("permission") || docError.code === "permission-denied") {
+        console.warn("PERMISSION DENIED: Your Firebase security rules are preventing access to the notary document")
+        console.warn("Please update your Firebase security rules to allow reading from the notaries collection")
+      }
+      return generateMockNotaryById(id)
     }
-
-    // If not found in Firestore, fall back to mock data
-    console.log("Notary not found in Firestore, using mock data")
-    return generateMockNotaryById(id)
   } catch (error) {
     console.error("Error in getNotaryById:", error)
     console.log("Falling back to mock data due to error")
@@ -287,11 +368,11 @@ function generateMockNotaryById(id: string): Notary {
       ],
       isVerified: true,
       isActive: true,
+      profileImageUrl: `/notary-${(mockId % 7) + 1}.jpg`,
     }
   }
 
   // For non-mock IDs, generate a mock notary with that ID
-  console.log("Using mock data for notary due to Firestore permission issues")
   const mockId = Number.parseInt(id.replace(/\D/g, "")) || 1
   const states = ["New York", "California", "Texas", "Florida", "Illinois", "Pennsylvania"]
   const cities = ["New York", "Los Angeles", "Houston", "Miami", "Chicago", "Philadelphia"]
@@ -310,6 +391,7 @@ function generateMockNotaryById(id: string): Notary {
     services: ["Loan Documents", "Real Estate", "Mobile Service", "Power of Attorney", "Affidavits", "Wills & Trusts"],
     isVerified: true,
     isActive: true,
+    profileImageUrl: `/notary-${(mockId % 7) + 1}.jpg`,
   }
 }
 
@@ -375,6 +457,7 @@ function generateMockNotaries(count: number): Notary[] {
       services: selectedServices,
       isVerified: isVerified,
       isActive: true, // All mock notaries are active by default
+      profileImageUrl: `/notary-${(i % 7) + 1}.jpg`,
     })
   }
 

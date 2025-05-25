@@ -66,7 +66,7 @@ export default function Header() {
             <Link href="/#how-it-works" className="text-gray-600 hover:text-amber-700">
               How It Works
             </Link>
-            <Link href="/#find-notary" className="text-gray-600 hover:text-amber-700">
+            <Link href="/notaries" className="text-gray-600 hover:text-amber-700">
               Find a Notary
             </Link>
             <Link href="/#testimonials" className="text-gray-600 hover:text-amber-700">
@@ -96,7 +96,7 @@ export default function Header() {
                 How It Works
               </Link>
               <Link
-                href="/#find-notary"
+                href="/notaries"
                 className="text-gray-600 hover:text-amber-700 py-2"
                 onClick={() => setIsMenuOpen(false)}
               >

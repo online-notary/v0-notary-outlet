@@ -9,128 +9,28 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { MapPin, Search, Star, ArrowRight, ArrowLeft, CheckCircle2, Filter, AlertTriangle, XCircle } from "lucide-react"
+import {
+  MapPin,
+  Search,
+  Star,
+  ArrowRight,
+  ArrowLeft,
+  CheckCircle2,
+  Filter,
+  AlertTriangle,
+  XCircle,
+  RefreshCw,
+} from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { ClientOnly } from "../components/client-only"
 import Header from "../components/header"
 import { PriceBadge } from "../components/price-badge"
-
-// Mock notary data
-const mockNotaries = [
-  {
-    id: "1",
-    name: "Sarah Johnson",
-    title: "Certified Notary Public",
-    location: "New York, NY",
-    rating: 5,
-    reviews: 24,
-    services: ["Loan Documents", "Real Estate", "Mobile Service"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "2",
-    name: "Michael Smith",
-    title: "Mobile Notary",
-    location: "Los Angeles, CA",
-    rating: 5,
-    reviews: 18,
-    services: ["Power of Attorney", "Affidavits", "Wills & Trusts"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "3",
-    name: "Emily Davis",
-    title: "Certified Notary Public",
-    location: "Chicago, IL",
-    rating: 4,
-    reviews: 15,
-    services: ["Real Estate", "Loan Documents", "Acknowledgments"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "4",
-    name: "David Wilson",
-    title: "Notary Signing Agent",
-    location: "Houston, TX",
-    rating: 5,
-    reviews: 32,
-    services: ["Loan Signing", "Mobile Service", "Same-Day Available"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "5",
-    name: "Jennifer Lee",
-    title: "Professional Notary",
-    location: "Miami, FL",
-    rating: 5,
-    reviews: 27,
-    services: ["Apostille", "Oaths & Affirmations", "Jurats"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "6",
-    name: "Robert Brown",
-    title: "Certified Notary Public",
-    location: "Phoenix, AZ",
-    rating: 4,
-    reviews: 19,
-    services: ["Mobile Service", "Loan Documents", "Power of Attorney"],
-    isVerified: false,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "7",
-    name: "Lisa Martinez",
-    title: "Notary Signing Agent",
-    location: "Philadelphia, PA",
-    rating: 5,
-    reviews: 22,
-    services: ["Real Estate", "Wills & Trusts", "Affidavits"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "8",
-    name: "James Taylor",
-    title: "Mobile Notary",
-    location: "San Antonio, TX",
-    rating: 4,
-    reviews: 14,
-    services: ["Loan Documents", "Mobile Service", "Same-Day Available"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "9",
-    name: "Patricia Garcia",
-    title: "Professional Notary",
-    location: "San Diego, CA",
-    rating: 5,
-    reviews: 31,
-    services: ["Apostille", "Acknowledgments", "Jurats"],
-    isVerified: true,
-    isActive: true,
-    profileImageUrl: null,
-  },
-]
+import { getAllNotaries, type Notary } from "../data/notaries"
 
 // Function to extract states from notaries
-const extractStates = (notaries: any[]) => {
+const extractStates = (notaries: Notary[]) => {
   const states = new Set<string>()
   notaries.forEach((notary) => {
     const location = notary.location.split(", ")
@@ -142,7 +42,7 @@ const extractStates = (notaries: any[]) => {
 }
 
 // Function to extract services from notaries
-const extractServices = (notaries: any[]) => {
+const extractServices = (notaries: Notary[]) => {
   const services = new Set<string>()
   notaries.forEach((notary) => {
     notary.services.forEach((service: string) => {
@@ -204,9 +104,11 @@ function NotariesPageSkeleton() {
 }
 
 export default function NotariesPage() {
-  const [notaries] = useState(mockNotaries)
-  const [filteredNotaries, setFilteredNotaries] = useState(mockNotaries)
+  const [allNotaries, setAllNotaries] = useState<Notary[]>([])
+  const [filteredNotaries, setFilteredNotaries] = useState<Notary[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [usedMockData, setUsedMockData] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
   const [showVerifiedOnly, setShowVerifiedOnly] = useState(false)
@@ -215,21 +117,47 @@ export default function NotariesPage() {
   const [showFilters, setShowFilters] = useState(false)
 
   const notariesPerPage = 9
-  const states = extractStates(notaries)
-  const services = extractServices(notaries)
 
-  useEffect(() => {
-    // Simulate loading
-    const timer = setTimeout(() => {
+  // Fetch notaries from Firebase
+  const fetchNotaries = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      console.log("Fetching notaries from Firebase...")
+
+      const result = await getAllNotaries(200) // Get more notaries for better filtering
+      console.log("Fetch result:", result)
+
+      // Filter for active notaries only
+      const activeNotaries = result.notaries.filter((notary) => notary.isActive === true)
+      console.log(`Filtered to ${activeNotaries.length} active notaries out of ${result.notaries.length} total`)
+
+      setAllNotaries(activeNotaries)
+      setUsedMockData(result.usedMockData)
+
+      if (activeNotaries.length === 0) {
+        setError("No active notaries found in the database.")
+      }
+    } catch (err) {
+      console.error("Error fetching notaries:", err)
+      setError("Failed to load notaries. Please try again.")
+    } finally {
       setLoading(false)
-    }, 1000)
+    }
+  }
 
-    return () => clearTimeout(timer)
+  // Initial data fetch
+  useEffect(() => {
+    fetchNotaries()
   }, [])
+
+  // Extract states and services from current notaries
+  const states = extractStates(allNotaries)
+  const services = extractServices(allNotaries)
 
   useEffect(() => {
     // Apply filters whenever filter criteria change
-    let result = [...notaries]
+    let result = [...allNotaries]
 
     // Filter by verification status
     if (showVerifiedOnly) {
@@ -254,13 +182,16 @@ export default function NotariesPage() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
       result = result.filter(
-        (notary) => notary.name.toLowerCase().includes(query) || notary.location.toLowerCase().includes(query),
+        (notary) =>
+          notary.name.toLowerCase().includes(query) ||
+          notary.location.toLowerCase().includes(query) ||
+          notary.services.some((service) => service.toLowerCase().includes(query)),
       )
     }
 
     setFilteredNotaries(result)
     setCurrentPage(1) // Reset to first page when filters change
-  }, [notaries, showVerifiedOnly, selectedState, selectedService, searchQuery])
+  }, [allNotaries, showVerifiedOnly, selectedState, selectedService, searchQuery])
 
   // Calculate pagination
   const totalPages = Math.ceil(filteredNotaries.length / notariesPerPage)
@@ -278,6 +209,10 @@ export default function NotariesPage() {
     setShowVerifiedOnly(false)
     setSelectedState("all")
     setSelectedService("all")
+  }
+
+  const handleRetry = () => {
+    fetchNotaries()
   }
 
   if (loading) {
@@ -298,19 +233,58 @@ export default function NotariesPage() {
                   Back to Home
                 </Link>
                 <h1 className="text-3xl font-bold">All Notaries</h1>
+                {/* Data source indicator */}
+                <div className="mt-2">
+                  {usedMockData ? (
+                    <Badge variant="outline" className="text-amber-600 border-amber-200">
+                      Sample Data - Update Firebase rules to see real data
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-green-100 text-green-800 border-green-200">
+                      ✓ Displaying real notary data from Firebase
+                    </Badge>
+                  )}
+                </div>
               </div>
-              <Button
-                variant="outline"
-                className="flex items-center gap-2"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <Filter className="h-4 w-4" />
-                Filters
-                {(showVerifiedOnly || selectedState !== "all" || selectedService !== "all") && (
-                  <Badge className="ml-1 bg-amber-700">Active</Badge>
-                )}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRetry}
+                  disabled={loading}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2"
+                  onClick={() => setShowFilters(!showFilters)}
+                >
+                  <Filter className="h-4 w-4" />
+                  Filters
+                  {(showVerifiedOnly || selectedState !== "all" || selectedService !== "all") && (
+                    <Badge className="ml-1 bg-amber-700">Active</Badge>
+                  )}
+                </Button>
+              </div>
             </div>
+
+            {/* Error State */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <AlertTriangle className="h-5 w-5 text-red-500 mr-2" />
+                    <span className="text-red-700">{error}</span>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={handleRetry}>
+                    Try Again
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* Filters Panel */}
@@ -388,7 +362,7 @@ export default function NotariesPage() {
                 <form onSubmit={handleSearch} className="mb-6">
                   <div className="relative">
                     <Input
-                      placeholder="Search by name or location..."
+                      placeholder="Search by name, location, or service..."
                       className="pl-10 pr-4 py-6 text-lg rounded-lg shadow-sm"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
@@ -408,7 +382,7 @@ export default function NotariesPage() {
 
                 {/* Results Stats */}
                 <div className="mb-4 text-sm text-gray-500">
-                  Showing {currentNotaries.length} of {filteredNotaries.length} notaries
+                  Showing {currentNotaries.length} of {filteredNotaries.length} active notaries
                   {showVerifiedOnly && " (verified only)"}
                   {selectedState !== "all" && ` in ${selectedState}`}
                   {selectedService !== "all" && ` offering ${selectedService}`}
@@ -428,7 +402,7 @@ export default function NotariesPage() {
                             <Image
                               src={
                                 notary.profileImageUrl ||
-                                `/placeholder.svg?height=300&width=500&query=professional notary ${notary.id || ""}`
+                                `/placeholder.svg?height=300&width=500&query=professional notary ${notary.name || "/placeholder.svg"}`
                               }
                               alt={notary.name}
                               fill
@@ -505,13 +479,21 @@ export default function NotariesPage() {
                     </div>
                     <h3 className="text-lg font-medium text-gray-900 mb-2">No notaries found</h3>
                     <p className="text-gray-500 mb-6">
-                      {showVerifiedOnly
-                        ? "No verified notaries match your search criteria. Try adjusting your filters."
+                      {allNotaries.length === 0
+                        ? "No active notaries are available in the database."
                         : "No notaries match your search criteria. Try adjusting your filters."}
                     </p>
-                    <Button onClick={handleClearFilters} className="bg-amber-700 hover:bg-amber-800">
-                      Clear All Filters
-                    </Button>
+                    <div className="flex justify-center gap-2">
+                      {allNotaries.length === 0 ? (
+                        <Button onClick={handleRetry} className="bg-amber-700 hover:bg-amber-800">
+                          Refresh Data
+                        </Button>
+                      ) : (
+                        <Button onClick={handleClearFilters} className="bg-amber-700 hover:bg-amber-800">
+                          Clear All Filters
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
 

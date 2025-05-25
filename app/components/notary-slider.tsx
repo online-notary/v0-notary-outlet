@@ -8,70 +8,37 @@ import { Card } from "@/components/ui/card"
 import { MapPin, Star, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
 import { ClientOnly } from "./client-only"
 import { PriceBadge } from "./price-badge"
-
-// Mock notary data
-const mockNotaries = [
-  {
-    id: "1",
-    name: "Sarah Johnson",
-    title: "Certified Notary Public",
-    location: "New York, NY",
-    rating: 5,
-    reviews: 24,
-    services: ["Loan Documents", "Real Estate", "Mobile Service"],
-    isVerified: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "2",
-    name: "Michael Smith",
-    title: "Mobile Notary",
-    location: "Los Angeles, CA",
-    rating: 5,
-    reviews: 18,
-    services: ["Power of Attorney", "Affidavits", "Wills & Trusts"],
-    isVerified: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "3",
-    name: "Emily Davis",
-    title: "Certified Notary Public",
-    location: "Chicago, IL",
-    rating: 4,
-    reviews: 15,
-    services: ["Real Estate", "Loan Documents", "Acknowledgments"],
-    isVerified: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "4",
-    name: "David Wilson",
-    title: "Notary Signing Agent",
-    location: "Houston, TX",
-    rating: 5,
-    reviews: 32,
-    services: ["Loan Signing", "Mobile Service", "Same-Day Available"],
-    isVerified: true,
-    profileImageUrl: null,
-  },
-  {
-    id: "5",
-    name: "Jennifer Lee",
-    title: "Professional Notary",
-    location: "Miami, FL",
-    rating: 5,
-    reviews: 27,
-    services: ["Apostille", "Oaths & Affirmations", "Jurats"],
-    isVerified: true,
-    profileImageUrl: null,
-  },
-]
+import { getVerifiedNotaries } from "../data/notaries"
+import type { Notary } from "../data/notaries"
 
 function NotarySliderContent() {
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [notaries] = useState(mockNotaries)
+  const [notaries, setNotaries] = useState<Notary[]>([])
   const [visibleCount, setVisibleCount] = useState(3)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const fetchNotaries = async () => {
+      try {
+        setIsLoading(true)
+        setError(null)
+
+        const fetchedNotaries = await getVerifiedNotaries(10)
+        if (Array.isArray(fetchedNotaries)) {
+          setNotaries(fetchedNotaries)
+        } else {
+          setError("Received invalid data format from the server.")
+        }
+      } catch (err) {
+        setError(`Failed to load notaries: ${err instanceof Error ? err.message : "Unknown error"}`)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchNotaries()
+  }, [])
 
   useEffect(() => {
     const handleResize = () => {
@@ -90,34 +57,65 @@ function NotarySliderContent() {
   }, [])
 
   const scrollPrev = useCallback(() => {
-    setCurrentIndex((prevIndex) => (prevIndex === 0 ? notaries.length - visibleCount : prevIndex - 1))
+    if (notaries.length <= visibleCount) return
+    setCurrentIndex((prevIndex) =>
+      prevIndex === 0 ? notaries.length - visibleCount : prevIndex - 1
+    )
   }, [notaries.length, visibleCount])
 
   const scrollNext = useCallback(() => {
-    setCurrentIndex((prevIndex) => (prevIndex >= notaries.length - visibleCount ? 0 : prevIndex + 1))
+    if (notaries.length <= visibleCount) return
+    setCurrentIndex((prevIndex) =>
+      prevIndex >= notaries.length - visibleCount ? 0 : prevIndex + 1
+    )
   }, [notaries.length, visibleCount])
 
   const visibleNotaries = useCallback(() => {
-    const result = []
-    for (let i = 0; i < visibleCount; i++) {
+    if (notaries.length === 0) return []
+    if (notaries.length <= visibleCount) return notaries
+
+    return Array.from({ length: visibleCount }, (_, i) => {
       const index = (currentIndex + i) % notaries.length
-      result.push(notaries[index])
-    }
-    return result
+      return notaries[index]
+    })
   }, [currentIndex, notaries, visibleCount])
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-700"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <p className="text-red-500">{error}</p>
+      </div>
+    )
+  }
+
+  if (notaries.length === 0) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <p className="text-gray-500">No verified notaries available at the moment.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="relative">
       <div className="overflow-hidden">
         <div className="flex transition-transform duration-300 gap-4">
           {visibleNotaries().map((notary) => (
-            <div key={notary.id} className={`flex-1 min-w-0`}>
+            <div key={notary.id} className="flex-1 min-w-0">
               <Card className="h-full overflow-hidden shadow-md">
                 <div className="relative h-48 w-full bg-gray-100">
                   <Image
                     src={
                       notary.profileImageUrl ||
-                      `/placeholder.svg?height=300&width=500&query=professional notary ${notary.id || "/placeholder.svg"}`
+                      `/placeholder.svg?height=300&width=500&query=professional notary ${notary.id}`
                     }
                     alt={notary.name}
                     fill
@@ -163,22 +161,26 @@ function NotarySliderContent() {
           ))}
         </div>
       </div>
-      <Button
-        variant="outline"
-        size="icon"
-        className="absolute left-0 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full z-10"
-        onClick={scrollPrev}
-      >
-        <ChevronLeft className="h-6 w-6" />
-      </Button>
-      <Button
-        variant="outline"
-        size="icon"
-        className="absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full z-10"
-        onClick={scrollNext}
-      >
-        <ChevronRight className="h-6 w-6" />
-      </Button>
+      {notaries.length > visibleCount && (
+        <>
+          <Button
+            variant="outline"
+            size="icon"
+            className="absolute left-0 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full z-10"
+            onClick={scrollPrev}
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full z-10"
+            onClick={scrollNext}
+          >
+            <ChevronRight className="h-6 w-6" />
+          </Button>
+        </>
+      )}
     </div>
   )
 }

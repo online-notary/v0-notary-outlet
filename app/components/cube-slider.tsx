@@ -7,53 +7,17 @@ import { Button } from "@/components/ui/button"
 import { CheckCircle2, MapPin, Star } from "lucide-react"
 import { PriceBadge } from "./price-badge"
 import { ClientOnly } from "./client-only"
+import { getActiveNotaries, type Notary } from "@/app/data/notaries"
 
-// Mock notary data
-const notaries = [
-  {
-    id: "1",
-    name: "Sarah Johnson",
-    title: "Certified Notary Public",
-    location: "New York, NY",
-    rating: 5,
-    reviews: 24,
-    services: ["Loan Documents", "Real Estate", "Mobile Service"],
-    isVerified: true,
-    image: "/female-notary-office.png",
-  },
-  {
-    id: "2",
-    name: "Michael Smith",
-    title: "Mobile Notary",
-    location: "Los Angeles, CA",
-    rating: 5,
-    reviews: 18,
-    services: ["Power of Attorney", "Affidavits", "Wills & Trusts"],
-    isVerified: true,
-    image: "/notary-signing-documents.png",
-  },
-  {
-    id: "3",
-    name: "Emily Davis",
-    title: "Certified Notary Public",
-    location: "Chicago, IL",
-    rating: 4,
-    reviews: 15,
-    services: ["Real Estate", "Loan Documents", "Acknowledgments"],
-    isVerified: true,
-    image: "/female-notary-client.png",
-  },
-  {
-    id: "4",
-    name: "David Wilson",
-    title: "Notary Signing Agent",
-    location: "Houston, TX",
-    rating: 5,
-    reviews: 32,
-    services: ["Loan Signing", "Mobile Service", "Same-Day Available"],
-    isVerified: true,
-    image: "/notary-signing.png",
-  },
+// Default notary images for fallback
+const defaultImages = [
+  "/female-notary-office.png",
+  "/notary-signing-documents.png",
+  "/female-notary-client.png",
+  "/notary-signing.png",
+  "/notary-with-client.png",
+  "/male-notary.png",
+  "/notary-signing-agent.png",
 ]
 
 interface CubeSliderProps {
@@ -65,43 +29,141 @@ export default function CubeSlider({ heroMode = false }: CubeSliderProps) {
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [autoplayPaused, setAutoplayPaused] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [notaries, setNotaries] = useState<Notary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  useEffect(() => {
+    const fetchNotaries = async () => {
+      try {
+        console.log("Fetching active notaries for cube slider...")
+        setLoading(true)
+        setError(null)
+
+        // Get active notaries (now always returns mock data to avoid permission errors)
+        const data = await getActiveNotaries(10)
+
+        // Ensure we have images for all notaries
+        const dataWithImages = data.map((notary, index) => {
+          if (!notary.profileImageUrl) {
+            return {
+              ...notary,
+              profileImageUrl: defaultImages[index % defaultImages.length],
+            }
+          }
+          return notary
+        })
+
+        console.log(`Fetched ${dataWithImages.length} active notaries for cube slider`)
+        setNotaries(dataWithImages)
+      } catch (error: any) {
+        console.error("Failed to fetch active notaries for cube slider", error)
+        setError("Failed to load notaries. Using sample data.")
+
+        // Create fallback mock data
+        const mockData = Array(4)
+          .fill(0)
+          .map((_, i) => ({
+            id: `fallback-${i + 1}`,
+            name: ["Sarah Johnson", "Michael Smith", "Emily Davis", "David Wilson"][i],
+            title: ["Certified Notary Public", "Mobile Notary", "Certified Notary Public", "Notary Signing Agent"][i],
+            location: ["New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX"][i],
+            rating: 5,
+            reviews: [24, 18, 15, 32][i],
+            services: [
+              ["Loan Documents", "Real Estate", "Mobile Service"],
+              ["Power of Attorney", "Affidavits", "Wills & Trusts"],
+              ["Real Estate", "Loan Documents", "Acknowledgments"],
+              ["Loan Signing", "Mobile Service", "Same-Day Available"],
+            ][i],
+            isVerified: true,
+            isActive: true,
+            profileImageUrl: defaultImages[i],
+            phone: "",
+            email: "",
+            bio: "",
+          })) as Notary[]
+
+        setNotaries(mockData)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (mounted) {
+      fetchNotaries()
+    }
+  }, [mounted])
+
   const goToSlide = useCallback(
     (index: number) => {
-      if (isTransitioning) return
+      if (isTransitioning || notaries.length === 0) return
       setIsTransitioning(true)
       setCurrentIndex(index)
       setTimeout(() => {
         setIsTransitioning(false)
       }, 1000) // Match this with the CSS transition duration
     },
-    [isTransitioning],
+    [isTransitioning, notaries.length],
   )
 
   const goToNextSlide = useCallback(() => {
+    if (notaries.length === 0) return
     const nextIndex = (currentIndex + 1) % notaries.length
     goToSlide(nextIndex)
   }, [currentIndex, goToSlide, notaries.length])
 
   const goToPrevSlide = useCallback(() => {
+    if (notaries.length === 0) return
     const prevIndex = (currentIndex - 1 + notaries.length) % notaries.length
     goToSlide(prevIndex)
   }, [currentIndex, goToSlide, notaries.length])
 
   // Autoplay
   useEffect(() => {
-    if (autoplayPaused) return
+    if (autoplayPaused || notaries.length === 0) return
 
     const interval = setInterval(() => {
       goToNextSlide()
     }, 5000)
 
     return () => clearInterval(interval)
-  }, [goToNextSlide, autoplayPaused])
+  }, [goToNextSlide, autoplayPaused, notaries.length])
+
+  const handleRetry = useCallback(() => {
+    const fetchNotaries = async () => {
+      try {
+        console.log("Retrying active notary fetch...")
+        setLoading(true)
+        setError(null)
+        const data = await getActiveNotaries(10)
+
+        const dataWithImages = data.map((notary, index) => {
+          if (!notary.profileImageUrl) {
+            return {
+              ...notary,
+              profileImageUrl: defaultImages[index % defaultImages.length],
+            }
+          }
+          return notary
+        })
+
+        console.log(`Fetched ${dataWithImages.length} active notaries on retry`)
+        setNotaries(dataWithImages)
+      } catch (error: any) {
+        console.error("Failed to fetch active notaries on retry", error)
+        setError("Failed to load notaries. Using sample data.")
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchNotaries()
+  }, [])
 
   if (!mounted) {
     return (
@@ -111,10 +173,50 @@ export default function CubeSlider({ heroMode = false }: CubeSliderProps) {
     )
   }
 
+  if (loading) {
+    return (
+      <div className={`${heroMode ? "h-[400px]" : "h-[600px]"} flex items-center justify-center`}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-700 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading notaries...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className={`${heroMode ? "h-[400px]" : "h-[600px]"} flex flex-col items-center justify-center`}>
+        <p className="text-amber-600 mb-4 text-center max-w-md">{error}</p>
+        <Button onClick={handleRetry} className="bg-amber-700 hover:bg-amber-800">
+          Retry Loading
+        </Button>
+      </div>
+    )
+  }
+
+  if (notaries.length === 0) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-center">
+          <p className="text-gray-500 mb-4">No active notaries available at this time.</p>
+          <Button onClick={handleRetry} className="bg-amber-700 hover:bg-amber-800">
+            Refresh
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (heroMode) {
     return (
       <ClientOnly>
         <div className="relative overflow-hidden rounded-lg shadow-lg">
+          {/* Data source indicator */}
+          <div className="absolute top-2 left-2 z-20 bg-amber-100 text-amber-800 px-2 py-1 rounded text-xs">
+            Sample Data
+          </div>
+
           {/* Particle Background */}
           <div className="relative h-[400px] bg-gradient-to-b from-blue-900 to-blue-800 rounded-xl overflow-hidden">
             {/* Particles */}
@@ -161,7 +263,7 @@ export default function CubeSlider({ heroMode = false }: CubeSliderProps) {
                         <div className="bg-white rounded-xl shadow-lg overflow-hidden h-full flex flex-col">
                           <div className="relative w-full h-40">
                             <Image
-                              src={notary.image || "/placeholder.svg"}
+                              src={notary.profileImageUrl || defaultImages[index % defaultImages.length]}
                               alt={notary.name}
                               fill
                               className="object-cover"
@@ -302,7 +404,10 @@ export default function CubeSlider({ heroMode = false }: CubeSliderProps) {
         <div className="text-center mb-12">
           <h2 className="text-3xl font-bold mb-4">Featured Notaries</h2>
           <p className="text-lg text-gray-600 max-w-3xl mx-auto">
-            Browse our selection of verified notaries ready to assist you with your document needs.
+            Browse our selection of professional notaries ready to assist you with your document needs.
+          </p>
+          <p className="text-amber-600 text-sm mt-2">
+            Note: Sample data is being displayed. Update Firebase rules to see real notary data.
           </p>
         </div>
 
@@ -352,7 +457,7 @@ export default function CubeSlider({ heroMode = false }: CubeSliderProps) {
                       <div className="bg-white rounded-xl shadow-2xl overflow-hidden h-full flex flex-col md:flex-row">
                         <div className="relative w-full md:w-1/2 h-48 md:h-auto">
                           <Image
-                            src={notary.image || "/placeholder.svg"}
+                            src={notary.profileImageUrl || defaultImages[index % defaultImages.length]}
                             alt={notary.name}
                             fill
                             className="object-cover"
